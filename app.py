@@ -21,7 +21,7 @@ def home():
     return redirect('/scanner')
 
 # =========================
-# SCANNER PROFISSIONAL (FIX SAMSUNG)
+# SCANNER APP STYLE
 # =========================
 @app.route('/scanner')
 def scanner():
@@ -35,31 +35,69 @@ def scanner():
 <script src="https://unpkg.com/html5-qrcode"></script>
 
 <style>
-body { text-align:center; font-family:Arial; }
-#reader { width:320px; margin:auto; }
+body {
+    font-family: Arial;
+    background: #0f172a;
+    color: white;
+    text-align: center;
+}
+
+h2 { margin-top: 10px; }
+
+#reader {
+    width: 320px;
+    margin: auto;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+button {
+    padding: 12px;
+    margin: 5px;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+}
+
+.flash { background: orange; }
+.painel { background: #22c55e; }
+.apagar { background: red; }
+
+#status {
+    margin-top: 10px;
+    font-size: 18px;
+}
+
+#raw {
+    font-size: 14px;
+    color: #94a3b8;
+}
 </style>
 </head>
 
 <body>
 
-<h2>📷 Scanner Profissional</h2>
+<h2>📷 Scanner</h2>
 
 <div id="reader"></div>
 
-<h2 id="status">Iniciando câmera...</h2>
-<h3 id="raw"></h3>
+<div>
+    <button class="flash" onclick="toggleFlash()">🔦 Flash</button>
+    <button class="painel" onclick="window.location='/dashboard'">📊 Painel</button>
+</div>
 
-<br>
-<a href="/dashboard">📊 Painel</a>
+<h2 id="status">Iniciando...</h2>
+<div id="raw"></div>
 
 <script>
-
+let scanner;
+let flashOn = false;
 let ultimo = "";
 
 // ======================
 function iniciar(){
 
-    let scanner = new Html5Qrcode("reader");
+    scanner = new Html5Qrcode("reader");
 
     scanner.start(
         { facingMode: "environment" },
@@ -69,17 +107,33 @@ function iniciar(){
         },
         (text) => {
 
-            if(text === ultimo) return; // evita duplicado rápido
+            if(text === ultimo) return;
             ultimo = text;
 
             processar(text);
 
-            setTimeout(()=>{ ultimo = ""; }, 1500);
+            setTimeout(()=>{ ultimo=""; }, 1500);
         }
     ).then(()=>{
-        document.getElementById("status").innerText = "📷 Pronto para leitura";
+        document.getElementById("status").innerText = "📷 Pronto";
     }).catch(()=>{
-        document.getElementById("status").innerText = "❌ Erro na câmera";
+        document.getElementById("status").innerText = "❌ Erro câmera";
+    });
+}
+
+// ======================
+function toggleFlash(){
+    if(!scanner) return;
+
+    scanner.getRunningTrackCapabilities().then(cap=>{
+        if(cap.torch){
+            scanner.applyVideoConstraints({
+                advanced: [{ torch: !flashOn }]
+            });
+            flashOn = !flashOn;
+        } else {
+            alert("Flash não suportado");
+        }
     });
 }
 
@@ -98,11 +152,16 @@ function processar(text){
         document.getElementById("status").innerText = d.msg;
     });
 
+    // 🔊 bip
     new Audio("https://www.soundjay.com/buttons/sounds/beep-07.mp3").play();
+
+    // 📳 vibração
+    if (navigator.vibrate) {
+        navigator.vibrate(200);
+    }
 }
 
 iniciar();
-
 </script>
 
 </body>
@@ -110,7 +169,7 @@ iniciar();
 """
 
 # =========================
-# PROCESSAMENTO DO QR
+# SCAN
 # =========================
 @app.route('/scan', methods=['POST'])
 def scan():
@@ -124,7 +183,7 @@ def scan():
         pacote = numeros[0]
         obra = numeros[1]
     else:
-        return {"msg":f"❌ NÃO RECONHECIDO"}
+        return {"msg":"❌ NÃO RECONHECIDO"}
 
     codigo = f"{obra}.1-{pacote}"
 
@@ -169,7 +228,7 @@ def dados():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT codigo,obra,pacote,data,hora FROM leituras")
+    cur.execute("SELECT id,codigo,obra,pacote,data FROM leituras ORDER BY id DESC")
 
     rows = cur.fetchall()
 
@@ -177,30 +236,50 @@ def dados():
     conn.close()
 
     return jsonify([{
-        "codigo":r[0],
-        "obra":r[1],
-        "pacote":r[2],
-        "data":r[3],
-        "hora":r[4]
+        "id":r[0],
+        "codigo":r[1],
+        "obra":r[2],
+        "pacote":r[3],
+        "data":r[4]
     } for r in rows])
 
 # =========================
-# DASHBOARD COM LUPA
+# APAGAR
+# =========================
+@app.route('/delete/<int:id>')
+def delete(id):
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM leituras WHERE id=%s",(id,))
+    conn.commit()
+
+    cur.close()
+    conn.close()
+
+    return redirect('/dashboard')
+
+# =========================
+# DASHBOARD
 # =========================
 @app.route('/dashboard')
 def dashboard():
     return """
 <h2>📊 Painel</h2>
 
-🔍 <input type="text" id="busca" placeholder="Pesquisar código ou obra">
-
-<button onclick="exportar()">📥 Excel</button>
+🔍 <input type="text" id="busca" placeholder="Pesquisar">
 
 <h3 id="total"></h3>
 
 <table border="1">
 <thead>
-<tr><th>Código</th><th>Obra</th><th>Pacote</th><th>Data</th></tr>
+<tr>
+<th>Código</th>
+<th>Obra</th>
+<th>Pacote</th>
+<th>Ação</th>
+</tr>
 </thead>
 <tbody id="tb"></tbody>
 
@@ -220,25 +299,14 @@ function render(lista){
     let tb=document.getElementById("tb");
     tb.innerHTML="";
 
-    let cont={};
-
     lista.forEach(l=>{
         tb.innerHTML+=`<tr>
         <td>${l.codigo}</td>
         <td>${l.obra}</td>
         <td>${l.pacote}</td>
-        <td>${l.data}</td>
+        <td><a href="/delete/${l.id}">🗑️</a></td>
         </tr>`;
-
-        cont[l.obra]=(cont[l.obra]||0)+1;
     });
-
-    let txt="";
-    for(let o in cont){
-        txt+=`Obra ${o}: ${cont[o]} | `;
-    }
-
-    document.getElementById("total").innerText=txt;
 }
 
 document.getElementById("busca").addEventListener("input", function(){
@@ -251,10 +319,6 @@ document.getElementById("busca").addEventListener("input", function(){
 
     render(filtrado);
 });
-
-function exportar(){
-    window.location="/exportar";
-}
 
 carregar();
 </script>
@@ -269,12 +333,12 @@ def exportar():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT codigo,obra,pacote,data,hora FROM leituras")
+    cur.execute("SELECT codigo,obra,pacote,data FROM leituras")
     rows = cur.fetchall()
 
     wb = Workbook()
     ws = wb.active
-    ws.append(["Código","Obra","Pacote","Data","Hora"])
+    ws.append(["Código","Obra","Pacote","Data"])
 
     for r in rows:
         ws.append(r)
