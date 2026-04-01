@@ -38,7 +38,7 @@ def protegido():
     return 'logado' in session
 
 # =========================
-# SCANNER PRO
+# SCANNER PRO HÍBRIDO
 # =========================
 @app.route('/scanner')
 def scanner():
@@ -51,18 +51,20 @@ def scanner():
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Scanner PRO</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
 </head>
 
 <body style="text-align:center;font-family:Arial">
 
 <h2>📷 Scanner PRO</h2>
 
-<video id="video" autoplay playsinline style="width:300px;border:2px solid black;"></video>
+<video id="video" autoplay playsinline style="width:300px;"></video>
+<div id="reader" style="width:300px;margin:auto;display:none;"></div>
 
-<br><br>
-<button onclick="trocarCamera()">🔄 Trocar</button>
+<br>
+<button onclick="trocarCamera()">🔄 Trocar Câmera</button>
 
-<h2 id="status">Aguardando...</h2>
+<h2 id="status">Iniciando...</h2>
 <h3 id="raw"></h3>
 
 <br>
@@ -74,11 +76,13 @@ let stream;
 let cameras = [];
 let index = 0;
 
+// ======================
 async function listar(){
     let devices = await navigator.mediaDevices.enumerateDevices();
     cameras = devices.filter(d => d.kind === "videoinput");
 }
 
+// ======================
 async function iniciar(){
     if(stream){
         stream.getTracks().forEach(t => t.stop());
@@ -90,47 +94,74 @@ async function iniciar(){
 
     video.srcObject = stream;
 
-    ler();
+    iniciarLeitura();
 }
 
+// ======================
 function trocarCamera(){
     index = (index + 1) % cameras.length;
     iniciar();
 }
 
-async function ler(){
-    if (!('BarcodeDetector' in window)) {
-        document.getElementById("status").innerText = "❌ Navegador não suporta";
-        return;
-    }
+// ======================
+async function iniciarLeitura(){
 
-    const detector = new BarcodeDetector({
-        formats: ['qr_code','code_128','ean_13']
+    if ('BarcodeDetector' in window) {
+
+        const detector = new BarcodeDetector({
+            formats: ['qr_code','code_128','ean_13']
+        });
+
+        document.getElementById("status").innerText = "Scanner rápido ativo";
+
+        setInterval(async ()=>{
+            try{
+                let codes = await detector.detect(video);
+
+                if(codes.length > 0){
+                    processar(codes[0].rawValue);
+                }
+            }catch(e){}
+        },800);
+
+    } else {
+        iniciarFallback();
+    }
+}
+
+// ======================
+function iniciarFallback(){
+
+    document.getElementById("status").innerText = "Modo compatibilidade";
+
+    video.style.display = "none";
+    document.getElementById("reader").style.display = "block";
+
+    let scanner = new Html5Qrcode("reader");
+
+    scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        (text) => processar(text)
+    );
+}
+
+// ======================
+function processar(text){
+
+    document.getElementById("raw").innerText = text;
+
+    fetch('/scan',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({code:text})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        document.getElementById("status").innerText = d.msg;
     });
 
-    setInterval(async ()=>{
-        try{
-            let codes = await detector.detect(video);
-
-            if(codes.length > 0){
-                let text = codes[0].rawValue;
-
-                document.getElementById("raw").innerText = text;
-
-                fetch('/scan',{
-                    method:'POST',
-                    headers:{'Content-Type':'application/json'},
-                    body:JSON.stringify({code:text})
-                })
-                .then(r=>r.json())
-                .then(d=>{
-                    document.getElementById("status").innerText = d.msg;
-                });
-
-                new Audio("https://www.soundjay.com/buttons/sounds/beep-07.mp3").play();
-            }
-        }catch(e){}
-    },1000);
+    new Audio("https://www.soundjay.com/buttons/sounds/beep-07.mp3").play();
 }
 
 listar().then(iniciar);
