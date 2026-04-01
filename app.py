@@ -17,7 +17,7 @@ def get_db():
 leituras_memoria = []
 
 # =========================
-# 📷 SCANNER PROFISSIONAL
+# 📷 SCANNER
 # =========================
 @app.route('/')
 def index():
@@ -85,7 +85,6 @@ function startScanner(){
             return;
         }
 
-        // 🔥 tenta pegar traseira
         let traseira = devices.find(d =>
             d.label.toLowerCase().includes("back") ||
             d.label.toLowerCase().includes("traseira")
@@ -204,7 +203,7 @@ def dados():
     return jsonify({"lista": lista})
 
 # =========================
-# 📊 DASHBOARD TOP
+# 📊 DASHBOARD COMPLETO
 # =========================
 @app.route('/dashboard')
 def dashboard():
@@ -213,30 +212,66 @@ def dashboard():
 <head>
 <style>
 body { background:#0f172a; color:white; font-family:Arial; }
-.grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:20px; padding:20px;}
-.card { background:#1e293b; padding:20px; border-radius:15px;}
-.ok { color:#22c55e;}
-.andamento { color:#facc15;}
-.faltando { color:#ef4444;}
-.small { font-size:14px; opacity:0.8;}
+
+.topo {
+    display:flex;
+    justify-content:space-between;
+    padding:20px;
+}
+
+input {
+    padding:10px;
+    width:250px;
+    border-radius:10px;
+    border:none;
+    outline:none;
+}
+
+.grid {
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px,1fr));
+    gap:20px;
+    padding:20px;
+}
+
+.card {
+    background:#1e293b;
+    padding:20px;
+    border-radius:15px;
+}
+
+.ok { color:#22c55e; }
+.andamento { color:#facc15; }
+.faltando { color:#ef4444; }
+
+.small { font-size:14px; opacity:0.8; }
+
+.total { font-size:18px; margin-top:10px; }
 </style>
 </head>
 
 <body>
-<h1>📦 PAINEL DE EXPEDIÇÃO</h1>
+
+<div class="topo">
+    <h1>📦 Painel de Expedição</h1>
+    <input type="text" id="busca" placeholder="🔍 Buscar obra ou caixa">
+</div>
+
 <div class="grid" id="grid"></div>
 
 <script>
-function atualizar(){
-fetch('/dados')
-.then(r=>r.json())
-.then(data=>{
+let dadosGlobais = [];
+
+function render(){
+
     let grid = document.getElementById("grid");
+    let busca = document.getElementById("busca").value.toLowerCase();
+
     grid.innerHTML = "";
 
     let grupos = {};
 
-    data.lista.forEach(item=>{
+    dadosGlobais.forEach(item=>{
         let chave = item.obra+"-"+item.caixa;
 
         if(!grupos[chave]){
@@ -254,8 +289,13 @@ fetch('/dados')
     for(let g in grupos){
         let item = grupos[g];
 
+        let textoBusca = (item.obra + " " + item.caixa).toLowerCase();
+
+        if(!textoBusca.includes(busca)) continue;
+
         let lidos = item.lidos.size;
         let total = item.total;
+        let faltandoQtd = total - lidos;
 
         let faltando = [];
         for(let i=1;i<=total;i++){
@@ -286,18 +326,35 @@ fetch('/dados')
 
         <div class="small">${statusText}</div>
 
+        <div class="total">
+            📊 Total: ${total} <br>
+            ✅ Lidos: ${lidos} <br>
+            ❌ Faltando: ${faltandoQtd}
+        </div>
+
         <div class="small">
-            Faltando: ${faltando.length ? faltando.join(", ") : "Nenhum"}
+            Faltantes: ${faltando.length ? faltando.join(", ") : "Nenhum"}
         </div>
         `;
 
         grid.appendChild(div);
     }
+}
+
+function atualizar(){
+fetch('/dados')
+.then(r=>r.json())
+.then(data=>{
+    dadosGlobais = data.lista;
+    render();
 });
 }
 
+document.getElementById("busca").addEventListener("input", render);
+
 setInterval(atualizar,1000);
 </script>
+
 </body>
 </html>
 """)
