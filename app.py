@@ -21,7 +21,7 @@ def home():
     return redirect('/scanner')
 
 # =========================
-# SCANNER
+# SCANNER COM TELA DINÂMICA
 # =========================
 @app.route('/scanner')
 def scanner():
@@ -30,15 +30,41 @@ def scanner():
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner</title>
+<title>Scanner PRO</title>
 <script src="https://unpkg.com/html5-qrcode"></script>
 
 <style>
 body { background:#0f172a; color:white; text-align:center; font-family:Arial; }
-#reader { width:320px; margin:auto; border-radius:10px; overflow:hidden; }
-button { padding:10px; border-radius:10px; margin:5px; border:none; }
-.flash { background:orange; }
-.painel { background:green; }
+
+#reader { width:320px; margin:auto; border-radius:12px; overflow:hidden; }
+
+button {
+    padding:10px;
+    margin:5px;
+    border:none;
+    border-radius:10px;
+}
+
+#pacote {
+    font-size:20px;
+    margin:10px;
+    color:#22c55e;
+}
+
+#lista {
+    max-height:200px;
+    overflow:auto;
+    background:#111827;
+    padding:10px;
+    border-radius:10px;
+    margin:10px;
+}
+
+.item {
+    border-bottom:1px solid #333;
+    padding:5px;
+    font-size:14px;
+}
 </style>
 </head>
 
@@ -48,16 +74,18 @@ button { padding:10px; border-radius:10px; margin:5px; border:none; }
 
 <div id="reader"></div>
 
-<button class="flash" onclick="toggleFlash()">🔦 Flash</button>
-<button class="painel" onclick="window.location='/dashboard'">📊 Painel</button>
+<button onclick="toggleFlash()">🔦 Flash</button>
 
-<h3 id="status">Iniciando...</h3>
-<div id="raw"></div>
+<h2 id="status">Iniciando...</h2>
+
+<div id="pacote">📦 Nenhum pacote</div>
+
+<div id="lista"></div>
 
 <script>
 let scanner;
-let flashOn = false;
-let ultimo = "";
+let ultimo="";
+let flashOn=false;
 
 function iniciar(){
     scanner = new Html5Qrcode("reader");
@@ -66,6 +94,7 @@ function iniciar(){
         { facingMode: "environment" },
         { fps:20, qrbox:{width:280,height:280} },
         (text)=>{
+
             if(text===ultimo) return;
             ultimo=text;
 
@@ -77,21 +106,50 @@ function iniciar(){
             .then(r=>r.json())
             .then(d=>{
                 document.getElementById("status").innerText=d.msg;
+
+                if(d.pacote){
+                    document.getElementById("pacote").innerText="📦 PACOTE "+d.pacote;
+                    document.getElementById("lista").innerHTML="";
+                }
+
+                if(d.peca){
+                    adicionarLista(d.peca);
+                }
             });
 
             new Audio("https://www.soundjay.com/buttons/sounds/beep-07.mp3").play();
             if(navigator.vibrate) navigator.vibrate(200);
 
-            setTimeout(()=>{ultimo=""},1500);
+            setTimeout(()=>{ultimo=""},1000);
         }
     );
 }
 
-function toggleFlash(){
-    scanner.applyVideoConstraints({
-        advanced: [{ torch: !flashOn }]
-    });
-    flashOn=!flashOn;
+function adicionarLista(txt){
+    let div=document.createElement("div");
+    div.className="item";
+    div.innerText=txt;
+
+    let lista=document.getElementById("lista");
+    lista.prepend(div);
+}
+
+async function toggleFlash(){
+    try{
+        const track = scanner.getRunningTrack();
+        const cap = track.getCapabilities();
+
+        if(cap.torch){
+            await track.applyConstraints({
+                advanced:[{torch:!flashOn}]
+            });
+            flashOn=!flashOn;
+        } else {
+            alert("Flash não suportado");
+        }
+    }catch(e){
+        alert("Erro flash");
+    }
 }
 
 iniciar();
@@ -102,7 +160,7 @@ iniciar();
 """
 
 # =========================
-# SCAN
+# SCAN COM RETORNO EM TEMPO REAL
 # =========================
 @app.route('/scan', methods=['POST'])
 def scan():
@@ -110,25 +168,13 @@ def scan():
     raw = request.json.get('code','')
     texto = raw.upper().strip()
 
-    numeros = re.findall(r"\d+", texto)
-
-    if len(numeros) >= 2:
-        pacote = numeros[0]
-        obra = numeros[1]
-    else:
-        return {"msg":"❌ NÃO RECONHECIDO"}
-
-    codigo = f"{obra}.1-{pacote}"
-
-    data = datetime.now().strftime("%Y-%m-%d")
-    hora = datetime.now().strftime("%H:%M:%S")
-
     conn = get_db()
     cur = conn.cursor()
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS leituras(
         id SERIAL PRIMARY KEY,
+        tipo TEXT,
         codigo TEXT UNIQUE,
         obra TEXT,
         pacote TEXT,
@@ -137,122 +183,62 @@ def scan():
     )
     """)
 
-    try:
+    data = datetime.now().strftime("%Y-%m-%d")
+    hora = datetime.now().strftime("%H:%M:%S")
+
+    # PACOTE
+    if "PACOTE" in texto:
+
+        numeros = re.findall(r"\d+", texto)
+
+        if len(numeros) >= 2:
+            pacote = numeros[0]
+            obra = numeros[1]
+
+            codigo = f"{obra}.1-{pacote}"
+
+            try:
+                cur.execute("""
+                INSERT INTO leituras (tipo,codigo,obra,pacote,data,hora)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                """,("PACOTE",codigo,obra,pacote,data,hora))
+                conn.commit()
+            except:
+                conn.rollback()
+
+            return {"msg":f"📦 PACOTE {pacote}", "pacote": pacote}
+
+    # PEÇA
+    else:
+
         cur.execute("""
-        INSERT INTO leituras (codigo, obra, pacote, data, hora)
-        VALUES (%s,%s,%s,%s,%s)
-        """,(codigo,obra,pacote,data,hora))
-        conn.commit()
-    except:
-        conn.rollback()
-        return {"msg":f"⚠️ DUPLICADO {codigo}"}
+        SELECT pacote, obra FROM leituras
+        WHERE tipo='PACOTE'
+        ORDER BY id DESC LIMIT 1
+        """)
 
-    cur.close()
-    conn.close()
+        ultimo = cur.fetchone()
 
-    return {"msg":f"✅ {codigo}"}
+        if not ultimo:
+            return {"msg":"⚠️ LEIA PACOTE"}
 
-# =========================
-# DADOS AGRUPADOS
-# =========================
-@app.route('/dados')
-def dados():
+        pacote, obra = ultimo
 
-    conn = get_db()
-    cur = conn.cursor()
+        try:
+            cur.execute("""
+            INSERT INTO leituras (tipo,codigo,obra,pacote,data,hora)
+            VALUES (%s,%s,%s,%s,%s,%s)
+            """,("PECA",texto,obra,pacote,data,hora))
+            conn.commit()
+        except:
+            conn.rollback()
+            return {"msg":"⚠️ DUPLICADO"}
 
-    cur.execute("SELECT id,codigo,obra,pacote FROM leituras ORDER BY pacote")
-
-    rows = cur.fetchall()
-
-    cur.close()
-    conn.close()
-
-    agrupado = {}
-
-    for r in rows:
-        id, codigo, obra, pacote = r
-
-        if pacote not in agrupado:
-            agrupado[pacote] = []
-
-        agrupado[pacote].append({
-            "id": id,
-            "codigo": codigo,
-            "obra": obra
-        })
-
-    return jsonify(agrupado)
-
-# =========================
-# DELETE
-# =========================
-@app.route('/delete/<int:id>')
-def delete(id):
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("DELETE FROM leituras WHERE id=%s",(id,))
-    conn.commit()
-
-    cur.close()
-    conn.close()
-
-    return "ok"
-
-# =========================
-# DASHBOARD ESTILO BARCODE
-# =========================
-@app.route('/dashboard')
-def dashboard():
-    return """
-<h2>📦 Volumes</h2>
-
-<div id="conteudo"></div>
-
-<script>
-
-function carregar(){
-    fetch('/dados')
-    .then(r=>r.json())
-    .then(dados=>{
-        let html="";
-
-        for(let pacote in dados){
-
-            let lista = dados[pacote];
-
-            html+=`
-            <div style="border:1px solid #ccc; margin:10px; padding:10px; border-radius:10px;">
-                <h3>📦 PACOTE ${pacote} (${lista.length})</h3>
-            `;
-
-            lista.forEach(l=>{
-                html+=`
-                <div style="display:flex; justify-content:space-between; border-bottom:1px solid #eee;">
-                    <span>${l.codigo}</span>
-                    <button onclick="del(${l.id})">🗑️</button>
-                </div>
-                `;
-            });
-
-            html+=`</div>`;
+        return {
+            "msg":f"🔩 OK",
+            "peca": texto,
+            "pacote": pacote
         }
-
-        document.getElementById("conteudo").innerHTML = html;
-    });
-}
-
-function del(id){
-    fetch('/delete/'+id)
-    .then(()=>carregar());
-}
-
-carregar();
-
-</script>
-"""
 
 # =========================
 # EXPORTAR
@@ -263,12 +249,12 @@ def exportar():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT codigo,obra,pacote,data FROM leituras")
+    cur.execute("SELECT tipo,codigo,obra,pacote,data FROM leituras")
     rows = cur.fetchall()
 
     wb = Workbook()
     ws = wb.active
-    ws.append(["Código","Obra","Pacote","Data"])
+    ws.append(["Tipo","Código","Obra","Pacote","Data"])
 
     for r in rows:
         ws.append(r)
