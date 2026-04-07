@@ -1,253 +1,258 @@
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return """
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Leitor QR - Expedição</title>
+<title>Scanner Expedição</title>
 
 <script src="https://unpkg.com/@zxing/browser@0.1.1"></script>
 
 <style>
-body {
-    margin: 0;
-    font-family: Arial;
-    background: #f2f2f2;
-}
+body { margin:0; font-family:Arial; background:#f2f2f2; }
 
-/* HEADER */
 .header {
-    background: #25346A;
-    color: white;
-    padding: 15px;
-    font-size: 18px;
+    background:#25346A;
+    color:white;
+    padding:15px;
+    font-size:18px;
 }
 
-/* BUSCA */
-.search {
-    padding: 10px;
-    background: white;
-}
+.search { padding:10px; background:white; }
 
 .search input {
-    width: 100%;
-    padding: 12px;
-    border-radius: 8px;
-    border: 1px solid #ccc;
+    width:100%;
+    padding:12px;
+    border-radius:8px;
+    border:1px solid #ccc;
 }
 
-/* VIDEO */
 #video {
-    width: 100%;
-    height: 250px;
-    object-fit: cover;
-    display: none;
+    width:100%;
+    height:250px;
+    display:none;
+    object-fit:cover;
 }
 
-/* SEÇÕES */
-.section-title {
-    padding: 10px;
-    font-weight: bold;
-    color: #555;
+/* VOLUMES */
+.volume {
+    background:white;
+    margin:10px;
+    padding:15px;
+    border-radius:10px;
 }
 
-/* ITEM */
-.item {
-    background: white;
-    margin: 5px 10px;
-    padding: 15px;
-    border-radius: 8px;
-    display: flex;
-    justify-content: space-between;
+.volume.active {
+    border:3px solid green;
 }
 
 /* BOTÕES */
-.btn-camera {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: #25346A;
-    width: 65px;
-    height: 65px;
-    border-radius: 50%;
-    color: white;
-    font-size: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+.btn {
+    position:fixed;
+    bottom:20px;
+    right:20px;
+    background:#25346A;
+    width:65px;
+    height:65px;
+    border-radius:50%;
+    color:white;
+    font-size:28px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
 }
 
-.btn-flash {
-    position: fixed;
-    bottom: 100px;
-    right: 20px;
-    background: #333;
-    color: white;
-    padding: 12px;
-    border-radius: 50%;
+.flash {
+    bottom:100px;
+    background:#333;
 }
 </style>
 </head>
 
 <body>
 
-<div class="header">RELATÓRIO DE CARGA</div>
+<div class="header">CONTROLE DE VOLUMES</div>
 
 <div class="search">
-    <input type="text" placeholder="🔎 Buscar volume..." onkeyup="filtrar(this.value)">
+<input placeholder="🔎 Buscar..." onkeyup="buscar(this.value)">
 </div>
 
 <video id="video"></video>
 
 <div id="lista"></div>
 
-<div class="btn-camera" onclick="iniciar()">📷</div>
-<div class="btn-flash" onclick="toggleFlash()">⚡</div>
+<div class="btn" onclick="iniciar()">📷</div>
+<div class="btn flash" onclick="flash()">⚡</div>
 
 <script>
-let codeReader = new ZXing.BrowserMultiFormatReader();
-let lista = [];
-let listaFiltrada = [];
-let ativo = false;
-let streamAtual = null;
-let flashLigado = false;
+let reader = new ZXing.BrowserMultiFormatReader();
 
-/* INICIAR CAMERA */
-async function iniciar() {
+let volumes = JSON.parse(localStorage.getItem("volumes") || "{}");
+let ativos = [];
 
-    const video = document.getElementById("video");
-    video.style.display = "block";
+let stream;
+let travado = false;
 
-    try {
-        const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
-
-        const traseira = devices[devices.length - 1].deviceId;
-
-        streamAtual = await navigator.mediaDevices.getUserMedia({
-            video: {
-                deviceId: traseira,
-                facingMode: "environment"
-            }
-        });
-
-        video.srcObject = streamAtual;
-
-        codeReader.decodeFromVideoElement(video, (result, err) => {
-
-            if (result && !ativo) {
-                ativo = true;
-
-                let texto = result.getText();
-
-                navigator.vibrate(200);
-
-                if (!lista.includes(texto)) {
-                    lista.push(texto);
-                    listaFiltrada = lista;
-                    atualizarLista();
-                }
-
-                setTimeout(() => ativo = false, 1000);
-            }
-        });
-
-    } catch (e) {
-        alert("Erro ao acessar câmera: " + e);
-    }
+// 🔊 SOM PROFISSIONAL
+function beep(){
+    let audio = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
+    audio.play();
 }
 
-/* FLASH REAL */
-function toggleFlash() {
+// 📳 VIBRAÇÃO
+function vibrar(){
+    if(navigator.vibrate) navigator.vibrate(100);
+}
 
-    if (!streamAtual) return;
+// 📷 INICIAR
+async function iniciar(){
 
-    let track = streamAtual.getVideoTracks()[0];
+    let video = document.getElementById("video");
+    video.style.display="block";
 
-    let capabilities = track.getCapabilities();
+    const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
+    const cam = devices[devices.length-1].deviceId;
 
-    if (!capabilities.torch) {
-        alert("Flash não suportado neste aparelho");
+    stream = await navigator.mediaDevices.getUserMedia({
+        video:{ deviceId:cam }
+    });
+
+    video.srcObject = stream;
+
+    reader.decodeFromVideoElement(video,(res,err)=>{
+
+        if(res && !travado){
+
+            travado = true;
+
+            let txt = res.getText().toUpperCase();
+
+            vibrar(); beep();
+
+            // 📦 VOLUME
+            if(txt.includes("PACOTE") || txt.includes("CAIXA")){
+                let num = txt.match(/\\d+/);
+
+                if(num){
+                    let v = num[0];
+
+                    if(!volumes[v]) volumes[v]=[];
+
+                    if(!ativos.includes(v)){
+                        ativos.push(v);
+                    }
+
+                    atualizar();
+                    salvar();
+                }
+            } else {
+
+                if(ativos.length===0){
+                    alert("Selecione um volume primeiro");
+                }
+
+                ativos.forEach(v=>{
+                    if(!volumes[v].includes(txt)){
+                        volumes[v].push(txt);
+                    }
+                });
+
+                atualizar();
+                salvar();
+            }
+
+            setTimeout(()=>travado=false,800);
+        }
+    });
+}
+
+// 🔦 FLASH
+function flash(){
+    if(!stream) return;
+
+    let track = stream.getVideoTracks()[0];
+    let cap = track.getCapabilities();
+
+    if(!cap.torch){
+        alert("Sem flash");
         return;
     }
 
-    flashLigado = !flashLigado;
-
     track.applyConstraints({
-        advanced: [{ torch: flashLigado }]
+        advanced:[{torch:true}]
     });
 }
 
-/* FILTRO */
-function filtrar(texto) {
-    texto = texto.toLowerCase();
-
-    listaFiltrada = lista.filter(item =>
-        item.toLowerCase().includes(texto)
-    );
-
-    atualizarLista();
+// 💾 SALVAR
+function salvar(){
+    localStorage.setItem("volumes", JSON.stringify(volumes));
 }
 
-/* CLASSIFICAÇÃO */
-function classificar(item) {
-    let t = item.toLowerCase();
+// 🔎 BUSCA
+function buscar(txt){
 
-    if (t.includes("caixa")) return "CAIXA";
-    if (t.includes("pacote")) return "PACOTE";
-    return "OUTROS";
-}
+    txt = txt.toLowerCase();
 
-/* ATUALIZAR LISTA */
-function atualizarLista() {
+    let html="";
 
-    let div = document.getElementById("lista");
-    div.innerHTML = "";
+    for(let v in volumes){
 
-    let caixas = [];
-    let pacotes = [];
-    let outros = [];
+        if(!v.includes(txt)) continue;
 
-    listaFiltrada.forEach((item, index) => {
-
-        let tipo = classificar(item);
-
-        if (tipo === "CAIXA") caixas.push({item, index});
-        else if (tipo === "PACOTE") pacotes.push({item, index});
-        else outros.push({item, index});
-    });
-
-    montar("CAIXAS", caixas, div);
-    montar("PACOTES", pacotes, div);
-    montar("OUTROS", outros, div);
-}
-
-/* MONTAR SEÇÃO */
-function montar(titulo, lista, div) {
-
-    if (lista.length === 0) return;
-
-    div.innerHTML += `<div class="section-title">${titulo}</div>`;
-
-    lista.forEach(obj => {
-        div.innerHTML += `
-        <div class="item" onclick="editar(${obj.index})">
-            <span>${obj.item}</span>
-            <span>✔</span>
-        </div>`;
-    });
-}
-
-/* EDITAR */
-function editar(index) {
-
-    let novo = prompt("Editar volume:", lista[index]);
-
-    if (novo) {
-        lista[index] = novo;
-        filtrar("");
+        html+=renderVolume(v);
     }
+
+    document.getElementById("lista").innerHTML = html;
 }
+
+// 📊 RENDER
+function atualizar(){
+
+    let html="";
+
+    for(let v in volumes){
+        html+=renderVolume(v);
+    }
+
+    document.getElementById("lista").innerHTML = html;
+}
+
+// 📦 TEMPLATE
+function renderVolume(v){
+
+    let ativo = ativos.includes(v) ? "active" : "";
+
+    return `
+    <div class="volume ${ativo}" onclick="toggle('${v}')">
+        <b>📦 Volume ${v}</b><br>
+        Peças: ${volumes[v].length}
+    </div>`;
+}
+
+// 🔄 ATIVAR VOLUME
+function toggle(v){
+
+    if(ativos.includes(v)){
+        ativos = ativos.filter(x=>x!==v);
+    }else{
+        ativos.push(v);
+    }
+
+    atualizar();
+}
+
+atualizar();
 </script>
 
 </body>
 </html>
+"""
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
