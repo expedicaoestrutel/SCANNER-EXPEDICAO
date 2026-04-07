@@ -10,7 +10,7 @@ def db():
     return psycopg2.connect(DATABASE_URL)
 
 # =========================
-# BANCO
+# CRIAR TABELAS
 # =========================
 def criar():
     conn = db()
@@ -43,7 +43,7 @@ def criar():
 criar()
 
 # =========================
-# TRATAR CODIGO
+# TRATAR CÓDIGO
 # =========================
 def tratar_codigo(txt):
     txt = txt.upper()
@@ -63,31 +63,7 @@ def tratar_codigo(txt):
     return codigo, obra
 
 # =========================
-# IMPORTAR LISTA
-# =========================
-@app.route('/importar_lista', methods=['POST'])
-def importar_lista():
-    file = request.files['file']
-    df = pd.read_excel(file)
-
-    conn = db()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM lista")
-
-    for _, row in df.iterrows():
-        cur.execute("""
-        INSERT INTO lista (obra, codigo, qtde)
-        VALUES (%s,%s,%s)
-        """, (str(row['OBRA']), str(row['CODIGO']), int(row['QTDE'])))
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return {"ok": True}
-
-# =========================
-# SCAN
+# SCAN (SERVIDOR)
 # =========================
 @app.route('/scan', methods=['POST'])
 def scan():
@@ -97,7 +73,6 @@ def scan():
 
     texto_up = texto.upper()
 
-    # PACOTE
     if "PACOTE" in texto_up:
         nums = re.findall(r"\d+", texto_up)
         if nums:
@@ -110,13 +85,6 @@ def scan():
 
     conn = db()
     cur = conn.cursor()
-
-    # VALIDA NA LISTA
-    cur.execute("SELECT qtde FROM lista WHERE codigo=%s", (codigo,))
-    existe = cur.fetchone()
-
-    if not existe:
-        return {"erro_lista": True, "codigo": codigo}
 
     duplicado = False
 
@@ -139,40 +107,34 @@ def scan():
     conn.close()
 
     if duplicado:
-        return {"duplicado": True, "codigo": codigo}
+        return {"duplicado": True}
 
     return {"ok": True}
 
 # =========================
-# EXPORTAR EXCEL COMPLETO
+# EXPORTAR EXCEL
 # =========================
 @app.route('/exportar_excel')
 def exportar_excel():
     conn = db()
-    df = pd.read_sql("""
-        SELECT obra, pacote, codigo, usuario, data
-        FROM leituras
-        ORDER BY obra, pacote
-    """, conn)
+    df = pd.read_sql("SELECT * FROM leituras", conn)
 
     output = BytesIO()
     writer = pd.ExcelWriter(output, engine='openpyxl')
 
-    for obra in df['obra'].dropna().unique():
-        df_obra = df[df['obra'] == obra]
-        df_obra.to_excel(writer, sheet_name=f"OBRA_{obra}", index=False)
+    if not df.empty:
+        for obra in df['obra'].dropna().unique():
+            df[df['obra']==obra].to_excel(writer, sheet_name=f"OBRA_{obra}", index=False)
 
     writer.close()
     output.seek(0)
 
-    return Response(
-        output,
+    return Response(output,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition":"attachment;filename=expedicao.xlsx"}
-    )
+        headers={"Content-Disposition":"attachment;filename=expedicao.xlsx"})
 
 # =========================
-# EXPORTAR SEPARAÇÃO (LUIZ)
+# EXPORTAR SEPARAÇÃO
 # =========================
 @app.route('/exportar_obra')
 def exportar_obra():
@@ -210,35 +172,12 @@ def exportar_obra():
     cur.close()
     conn.close()
 
-    return Response(
-        texto,
+    return Response(texto,
         mimetype="text/plain",
-        headers={"Content-Disposition":"attachment;filename=separacao.txt"}
-    )
+        headers={"Content-Disposition":"attachment;filename=separacao.txt"})
 
 # =========================
-# TEMPO REAL
-# =========================
-@app.route('/realtime')
-def realtime():
-    conn = db()
-    cur = conn.cursor()
-
-    cur.execute("""
-    SELECT pacote,codigo,usuario,data
-    FROM leituras
-    ORDER BY id DESC
-    LIMIT 20
-    """)
-
-    dados = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    return jsonify(dados)
-
-# =========================
-# UI COMPLETA
+# FRONT (OFFLINE)
 # =========================
 @app.route('/')
 def home():
@@ -251,120 +190,131 @@ def home():
 
 <style>
 body { margin:0; background:#111; color:white; font-family:Arial; }
+.header { padding:10px; background:#222; }
+
+.volume { margin:10px; padding:10px; border-radius:10px; }
+
+.obra-1129 { background:#1b5e20; }
+.obra-1130 { background:#0d47a1; }
+.obra-1131 { background:#f9a825; color:black; }
+.obra-1132 { background:#b71c1c; }
+
+.item { border-bottom:1px solid rgba(255,255,255,0.1); }
 .btn { padding:10px; margin:5px; background:#00c853; border:none; border-radius:8px; color:white; }
-.tag { display:inline-block; background:#2962ff; padding:5px 10px; margin:3px; border-radius:20px; }
-.lista { padding:10px; max-height:250px; overflow:auto; }
 </style>
 </head>
 
 <body>
 
-<input id="user" placeholder="Usuário"><br>
-
-<input type="file" id="file">
-<button class="btn" onclick="upload()">📥 Importar Lista</button>
-
-<div id="reader"></div>
-
-<div>
-<b>Volumes:</b>
-<div id="volumes"></div>
-<button class="btn" onclick="limpar()">Limpar</button>
-</div>
-
+<div class="header">
+<input id="user" placeholder="Usuário">
+<button class="btn" onclick="sync()">🔄 Sync</button>
 <button class="btn" onclick="excel()">📊 Excel</button>
 <button class="btn" onclick="obra()">📦 Separação</button>
+</div>
 
-<div class="lista" id="lista"></div>
+<div id="reader"></div>
+<div id="lista"></div>
 
 <script>
-let volumes = [];
+let dados = JSON.parse(localStorage.getItem("dados") || "{}");
 
-function atualizarTela(){
-    let html="";
-    volumes.forEach(v=>{
-        html+=`<span class="tag">📦 ${v}</span>`;
-    });
-    document.getElementById("volumes").innerHTML = html;
+function salvar(){ localStorage.setItem("dados", JSON.stringify(dados)); }
+
+function detectarObra(txt){
+    let m = txt.match(/OBRA\\s*(\\d+)/);
+    if(m) return m[1];
+    let n = txt.match(/\\d+/);
+    return n ? n[0] : "0000";
 }
 
-function limpar(){
-    volumes=[];
-    atualizarTela();
-}
+function atualizar(){
+    let html = "";
 
-function upload(){
-    let f = document.getElementById("file").files[0];
-    let form = new FormData();
-    form.append("file", f);
+    for(let v in dados){
+        let obra = dados[v].obra;
+        let pecas = dados[v].pecas;
 
-    fetch('/importar_lista',{method:'POST', body:form})
-    .then(()=>alert("Lista importada"));
-}
+        html += `<div class="volume obra-${obra}">
+        <b>📦 Volume ${v} | Obra ${obra} (${pecas.length})</b>`;
 
-function excel(){
-    window.open('/exportar_excel');
-}
-
-function obra(){
-    window.open('/exportar_obra');
-}
-
-function atualizarLista(){
-    fetch('/realtime')
-    .then(r=>r.json())
-    .then(d=>{
-        let html="";
-        d.forEach(i=>{
-            html+=`<div>📦 ${i[0]} | 🔢 ${i[1]} | 👤 ${i[2]}</div>`;
+        pecas.forEach(p=>{
+            html += `<div class="item">🔢 ${p}</div>`;
         });
-        document.getElementById("lista").innerHTML = html;
-    });
-}
 
-setInterval(atualizarLista,2000);
+        html += "</div>";
+    }
 
-function vibrar(){
-    if(navigator.vibrate) navigator.vibrate(100);
+    document.getElementById("lista").innerHTML = html;
 }
 
 function onScanSuccess(txt){
-    fetch('/scan',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-            code: txt,
-            usuario: document.getElementById("user").value,
-            pacotes: volumes
-        })
-    })
-    .then(r=>r.json())
-    .then(res=>{
-        if(res.novo_pacote){
-            volumes.push(res.novo_pacote);
-            atualizarTela();
+
+    txt = txt.toUpperCase();
+
+    if(txt.includes("PACOTE")){
+        let num = txt.match(/\\d+/);
+        let obra = detectarObra(txt);
+
+        if(num){
+            let v = num[0];
+            if(!dados[v]) dados[v] = {obra:obra, pecas:[]};
+            salvar(); atualizar(); return;
         }
-        else if(res.erro_lista){
-            alert("🚨 PEÇA ERRADA: " + res.codigo);
-        }
-        else if(res.duplicado){
-            alert("⚠️ DUPLICADO");
-        }
-        else{
-            vibrar();
+    }
+
+    let cod = txt.match(/\\d+/);
+    if(!cod) return;
+    cod = cod[0];
+
+    let vols = Object.keys(dados);
+    if(vols.length===0){ alert("Leia volume"); return; }
+
+    vols.forEach(v=>{
+        if(!dados[v].pecas.includes(cod)){
+            dados[v].pecas.push(cod);
+        } else {
+            alert("Duplicado");
         }
     });
+
+    salvar(); atualizar();
 }
 
+function sync(){
+    let user = document.getElementById("user").value;
+
+    for(let v in dados){
+        dados[v].pecas.forEach(c=>{
+            fetch('/scan',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({code:c,usuario:user,pacotes:[v]})
+            });
+        });
+    }
+
+    alert("Sincronizado");
+}
+
+function excel(){ window.open('/exportar_excel'); }
+function obra(){ window.open('/exportar_obra'); }
+
 const html5QrCode = new Html5Qrcode("reader");
-Html5Qrcode.getCameras().then(devices=>{
-    html5QrCode.start(devices[0].id,{fps:10,qrbox:250},onScanSuccess);
+Html5Qrcode.getCameras().then(d=>{
+    html5QrCode.start(d[0].id,{fps:10,qrbox:250},onScanSuccess);
 });
+
+atualizar();
 </script>
 
 </body>
 </html>
 """
 
+# =========================
+# RENDER (OBRIGATÓRIO)
+# =========================
 if __name__ == "__main__":
-    app.run()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
