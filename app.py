@@ -1,307 +1,175 @@
-from flask import Flask
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return """
 <!DOCTYPE html>
-<html>
+<html lang="pt-BR">
 <head>
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<script src="https://unpkg.com/html5-qrcode"></script>
+
+<title>Leitor QR - Expedição</title>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8"></script>
 
 <style>
-body { margin:0; font-family:Arial; background:#f1f1f1; }
+body {
+    margin: 0;
+    font-family: Arial;
+    background: #f2f2f2;
+}
 
 /* HEADER */
 .header {
-    background:#d32f2f;
-    color:white;
-    padding:15px;
-    font-size:18px;
+    background: #e53935;
+    color: white;
+    padding: 15px;
+    font-size: 18px;
 }
 
-/* SEARCH */
-.search {
-    padding:10px;
-}
-.search input {
-    width:100%;
-    padding:12px;
-    border-radius:10px;
-    border:none;
+/* BUSCA */
+.search-box {
+    padding: 10px;
+    background: white;
 }
 
-/* LIST */
-.card {
-    background:white;
-    margin:10px;
-    padding:15px;
-    border-radius:10px;
-    box-shadow:0 2px 5px rgba(0,0,0,0.2);
+.search-box input {
+    width: 100%;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
 }
 
-/* FAB */
-.fab {
-    position:fixed;
-    bottom:20px;
-    right:20px;
-    background:#d32f2f;
-    color:white;
-    width:65px;
-    height:65px;
-    border-radius:50%;
-    font-size:26px;
-    border:none;
+/* LISTA */
+.item {
+    background: white;
+    padding: 15px;
+    margin: 5px 10px;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
 }
 
-/* SCANNER */
-#scanner {
-    display:none;
-    position:fixed;
-    top:0;
-    left:0;
-    width:100%;
-    height:100%;
-    background:black;
+/* BOTÕES */
+.btn-camera {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: #e53935;
+    width: 65px;
+    height: 65px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 28px;
 }
 
-#reader { width:100%; }
-
-/* TOP BAR */
-.top {
-    position:absolute;
-    top:0;
-    width:100%;
-    background:#d32f2f;
-    padding:10px;
-    color:white;
-    display:flex;
-    justify-content:space-between;
+/* CAMERA */
+#reader {
+    width: 100%;
+    height: 300px;
+    display: none;
 }
-
-/* MIRA */
-.mira {
-    position:absolute;
-    top:50%;
-    left:50%;
-    width:250px;
-    height:250px;
-    margin-left:-125px;
-    margin-top:-125px;
-    border:3px solid #00e5ff;
-    border-radius:10px;
-}
-
-/* FEEDBACK */
-.feedback {
-    position:absolute;
-    top:0;
-    left:0;
-    width:100%;
-    height:100%;
-    opacity:0;
-}
-
-.ok { background:rgba(0,255,0,0.3); }
-.erro { background:rgba(255,0,0,0.3); }
 </style>
 </head>
 
 <body>
 
-<div class="header">📦 Barcode PRO</div>
+<div class="header">RELATÓRIO DE CARGA</div>
 
-<div class="search">
-<input placeholder="Pesquisar volume ou peça..." oninput="pesquisar(this.value)">
+<div class="search-box">
+    <input type="text" placeholder="Buscar..." onkeyup="filtrar(this.value)">
 </div>
+
+<div id="reader"></div>
 
 <div id="lista"></div>
 
-<button class="fab" onclick="abrir()">📷</button>
-
-<!-- SCANNER -->
-<div id="scanner">
-
-    <div class="top">
-        <button onclick="fechar()">⬅</button>
-        <span>Leitura</span>
-        <button onclick="flash()">🔦</button>
-    </div>
-
-    <div id="reader"></div>
-    <div class="mira"></div>
-    <div id="fb" class="feedback"></div>
-
-</div>
+<div class="btn-camera" onclick="iniciarScanner()">📷</div>
 
 <script>
-let dados = JSON.parse(localStorage.getItem("dados") || "{}");
+let lista = [];
 let html5QrCode;
-let flashOn=false;
+let scanning = false;
 
-// =========================
-// SOM
-// =========================
-function beep(){
-    let audio = new Audio("https://actions.google.com/sounds/v1/beeps/beep_short.ogg");
-    audio.play();
-}
+/* INICIAR SCANNER (CORRIGIDO) */
+function iniciarScanner() {
 
-// =========================
-// VIBRAR
-// =========================
-function vibrar(){
-    if(navigator.vibrate) navigator.vibrate(100);
-}
-
-// =========================
-// LISTA
-// =========================
-function atualizar(filtro=""){
-    let html="";
-
-    for(let v in dados){
-
-        let itens = dados[v];
-
-        if(filtro){
-            if(!v.includes(filtro) && !itens.join().includes(filtro)){
-                continue;
-            }
-        }
-
-        html+=`
-        <div class="card">
-            <b>📦 Volume ${v}</b><br>
-            Peças: ${itens.length}
-        </div>`;
-    }
-
-    document.getElementById("lista").innerHTML=html;
-}
-
-function pesquisar(v){
-    atualizar(v.toUpperCase());
-}
-
-// =========================
-// SCANNER
-// =========================
-function abrir(){
-
-    document.getElementById("scanner").style.display="block";
+    document.getElementById("reader").style.display = "block";
 
     html5QrCode = new Html5Qrcode("reader");
 
-    Html5Qrcode.getCameras().then(devices=>{
+    const config = {
+        fps: 15,
+        qrbox: { width: 250, height: 250 },
+        aspectRatio: 1.0
+    };
 
-        let cam = devices.find(d =>
-            d.label.toLowerCase().includes("back") ||
-            d.label.toLowerCase().includes("environment")
-        );
+    html5QrCode.start(
+        { facingMode: "environment" }, // 🔥 GARANTE câmera traseira
+        config,
+        (decodedText) => {
+            if (!scanning) {
+                scanning = true;
 
-        html5QrCode.start(
-            cam ? cam.id : devices[0].id,
-            { fps:15, qrbox:250 },
-            scan
-        );
-    });
-}
+                navigator.vibrate(200);
 
-function fechar(){
-    html5QrCode.stop().then(()=>{
-        document.getElementById("scanner").style.display="none";
-    });
-}
+                if (!lista.includes(decodedText)) {
+                    lista.push(decodedText);
+                    atualizarLista();
+                }
 
-// =========================
-// FEEDBACK
-// =========================
-function feedback(tipo){
-    let el = document.getElementById("fb");
-    el.className = "feedback " + tipo;
-    el.style.opacity=1;
-
-    setTimeout(()=>{
-        el.style.opacity=0;
-    },200);
-}
-
-// =========================
-// LEITURA
-// =========================
-function scan(txt){
-
-    txt = txt.toUpperCase();
-
-    if(txt.includes("PACOTE")){
-        let n = txt.match(/\\d+/);
-        if(n){
-            let v = n[0];
-            if(!dados[v]) dados[v]=[];
-            salvar(); atualizar();
-            vibrar(); beep(); feedback("ok");
-            return;
+                // 🔥 EVITA TRAVAR
+                setTimeout(() => scanning = false, 1200);
+            }
+        },
+        (error) => {
+            // ignora erros de leitura
         }
-    }
-
-    let cod = txt.match(/\\d+/);
-    if(!cod) return;
-
-    cod = cod[0];
-
-    let vols = Object.keys(dados);
-    if(vols.length===0){
-        feedback("erro");
-        return;
-    }
-
-    vols.forEach(v=>{
-        if(!dados[v].includes(cod)){
-            dados[v].push(cod);
-        }else{
-            feedback("erro");
-            return;
-        }
-    });
-
-    salvar(); atualizar();
-    vibrar(); beep(); feedback("ok");
-}
-
-// =========================
-// FLASH
-// =========================
-function flash(){
-    let track = html5QrCode.getRunningTrack();
-    if(!track) return;
-
-    let cap = track.getCapabilities();
-    if(!cap.torch){
-        alert("Sem flash");
-        return;
-    }
-
-    flashOn = !flashOn;
-
-    track.applyConstraints({
-        advanced:[{torch:flashOn}]
+    ).catch(err => {
+        alert("Erro ao abrir câmera: " + err);
     });
 }
 
-// =========================
-function salvar(){
-    localStorage.setItem("dados", JSON.stringify(dados));
+/* LISTA */
+function atualizarLista() {
+    let div = document.getElementById("lista");
+    div.innerHTML = "";
+
+    lista.forEach((item, index) => {
+        div.innerHTML += `
+        <div class="item" onclick="editar(${index})">
+            <span>${item}</span>
+            <span>✔</span>
+        </div>`;
+    });
 }
 
-atualizar();
+/* EDITAR */
+function editar(i) {
+    let novo = prompt("Editar:", lista[i]);
+    if (novo) {
+        lista[i] = novo;
+        atualizarLista();
+    }
+}
+
+/* BUSCA */
+function filtrar(txt) {
+    txt = txt.toLowerCase();
+
+    let filtrado = lista.filter(i => i.toLowerCase().includes(txt));
+
+    let div = document.getElementById("lista");
+    div.innerHTML = "";
+
+    filtrado.forEach(item => {
+        div.innerHTML += `
+        <div class="item">
+            <span>${item}</span>
+            <span>✔</span>
+        </div>`;
+    });
+}
 </script>
 
 </body>
 </html>
-"""
-
-if __name__ == "__main__":
-    app.run(debug=True)
